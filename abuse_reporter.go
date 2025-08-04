@@ -14,6 +14,13 @@ import (
 	"time"
 )
 
+// AbuseDBConfig represents configuration for AbuseDB.info reporting
+type AbuseDBConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	APIKey     string `yaml:"api_key"`
+	Categories []int  `yaml:"categories"`
+}
+
 // AbuseReport represents a report to be sent to abuse databases
 type AbuseReport struct {
 	IP          string    `json:"ip"`
@@ -37,9 +44,9 @@ type ReporterManager struct {
 	config    *AbuseReportingConfig
 	hostname  string
 	// Metrics for monitoring
-	totalReports    int64
-	successReports  int64
-	failedReports   int64
+	totalReports   int64
+	successReports int64
+	failedReports  int64
 }
 
 // NewReporterManager creates a new reporter manager
@@ -64,15 +71,22 @@ func NewReporterManager(config *AbuseReportingConfig) (*ReporterManager, error) 
 		hostname:  hostname,
 	}
 
+	// Parse timeout string to duration
+	timeout, err := time.ParseDuration(config.Timeout)
+	if err != nil {
+		timeout = 30 * time.Second // default timeout
+		log.Printf("Warning: Could not parse timeout '%s', using default: %v", config.Timeout, timeout)
+	}
+
 	// Create HTTP client with timeout
 	httpClient := &http.Client{
-		Timeout: config.Timeout,
+		Timeout: timeout,
 	}
 
 	// Initialize AbuseIPDB reporter if enabled
-	if config.AbuseIPDB != nil && config.AbuseIPDB.Enabled && config.AbuseIPDB.APIKey != "" {
+	if config.AbuseIPDB.Enabled && config.AbuseIPDB.APIKey != "" {
 		reporter := &AbuseIPDBReporter{
-			config: config.AbuseIPDB,
+			config: &config.AbuseIPDB,
 			client: httpClient,
 		}
 		manager.reporters = append(manager.reporters, reporter)
@@ -80,9 +94,13 @@ func NewReporterManager(config *AbuseReportingConfig) (*ReporterManager, error) 
 	}
 
 	// Initialize AbuseDB reporter if enabled
-	if config.AbuseDB != nil && config.AbuseDB.Enabled && config.AbuseDB.APIKey != "" {
+	if config.AbuseIPDB.Enabled && config.AbuseIPDB.APIKey != "" {
 		reporter := &AbuseDBReporter{
-			config: config.AbuseDB,
+			config: &AbuseDBConfig{
+				Enabled:    config.AbuseIPDB.Enabled,
+				APIKey:     config.AbuseIPDB.APIKey,
+				Categories: config.AbuseIPDB.Categories,
+			},
 			client: httpClient,
 		}
 		manager.reporters = append(manager.reporters, reporter)
@@ -130,7 +148,7 @@ func (rm *ReporterManager) ReportIP(ip, patternName, reason string, categories m
 				if cat, exists := categories["abuseipdb"]; exists {
 					report.Categories = []int{cat}
 					log.Printf("Using pattern-specific category %d for AbuseIPDB", cat)
-				} else if rm.config.AbuseIPDB != nil && len(rm.config.AbuseIPDB.Categories) > 0 {
+				} else if len(rm.config.AbuseIPDB.Categories) > 0 {
 					report.Categories = rm.config.AbuseIPDB.Categories
 					log.Printf("Using default categories %v for AbuseIPDB", report.Categories)
 				}
@@ -138,8 +156,8 @@ func (rm *ReporterManager) ReportIP(ip, patternName, reason string, categories m
 				if cat, exists := categories["abusedb"]; exists {
 					report.Categories = []int{cat}
 					log.Printf("Using pattern-specific category %d for AbuseDB", cat)
-				} else if rm.config.AbuseDB != nil && len(rm.config.AbuseDB.Categories) > 0 {
-					report.Categories = rm.config.AbuseDB.Categories
+				} else if len(rm.config.AbuseIPDB.Categories) > 0 {
+					report.Categories = rm.config.AbuseIPDB.Categories
 					log.Printf("Using default categories %v for AbuseDB", report.Categories)
 				}
 			}
@@ -147,13 +165,13 @@ func (rm *ReporterManager) ReportIP(ip, patternName, reason string, categories m
 			// Use default categories
 			switch reporter.GetName() {
 			case "abuseipdb":
-				if rm.config.AbuseIPDB != nil && len(rm.config.AbuseIPDB.Categories) > 0 {
+				if len(rm.config.AbuseIPDB.Categories) > 0 {
 					report.Categories = rm.config.AbuseIPDB.Categories
 					log.Printf("Using default categories %v for AbuseIPDB", report.Categories)
 				}
 			case "abusedb":
-				if rm.config.AbuseDB != nil && len(rm.config.AbuseDB.Categories) > 0 {
-					report.Categories = rm.config.AbuseDB.Categories
+				if len(rm.config.AbuseIPDB.Categories) > 0 {
+					report.Categories = rm.config.AbuseIPDB.Categories
 					log.Printf("Using default categories %v for AbuseDB", report.Categories)
 				}
 			}
@@ -171,10 +189,14 @@ func (rm *ReporterManager) ReportIP(ip, patternName, reason string, categories m
 
 // reportSingleAttempt reports to a single service with no retry logic
 func (rm *ReporterManager) reportSingleAttempt(reporter AbuseReporter, report AbuseReport) {
-	ctx, cancel := context.WithTimeout(context.Background(), rm.config.Timeout)
+	timeout, err := time.ParseDuration(rm.config.Timeout)
+	if err != nil {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	err := reporter.ReportIP(ctx, report)
+	err = reporter.ReportIP(ctx, report)
 	if err == nil {
 		rm.successReports++
 		log.Printf("✓ Successfully reported IP %s to %s (pattern: %s) - Success rate: %.2f%% (%d/%d)",
@@ -219,7 +241,7 @@ func (r *AbuseIPDBReporter) ReportIP(ctx context.Context, report AbuseReport) er
 	}
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.abuseipdb.com/api/v2/report", 
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.abuseipdb.com/api/v2/report",
 		strings.NewReader(data.Encode()))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -281,7 +303,7 @@ func (r *AbuseDBReporter) ReportIP(ctx context.Context, report AbuseReport) erro
 		"ip":      report.IP,
 		"comment": report.Comment,
 	}
-	
+
 	if len(report.Categories) > 0 {
 		payload["categories"] = report.Categories
 	}
@@ -292,7 +314,7 @@ func (r *AbuseDBReporter) ReportIP(ctx context.Context, report AbuseReport) erro
 	}
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://abusedb.info/api/v1/report", 
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://abusedb.info/api/v1/report",
 		bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -346,7 +368,7 @@ func (r *MockReporter) ReportIP(ctx context.Context, report AbuseReport) error {
 	if r.shouldFail {
 		return fmt.Errorf("mock reporter configured to fail")
 	}
-	
+
 	log.Printf("🧪 Mock reporter: Successfully reported IP %s", report.IP)
 	log.Printf("   Categories: %v", report.Categories)
 	log.Printf("   Comment: %s", report.Comment)
@@ -367,16 +389,16 @@ func (rm *ReporterManager) LogMetrics() {
 		log.Printf("📊 Abuse Reporting Metrics: No reports sent yet")
 		return
 	}
-	
+
 	successRate := float64(rm.successReports) / float64(rm.totalReports) * 100
 	failureRate := float64(rm.failedReports) / float64(rm.totalReports) * 100
-	
+
 	log.Printf("📊 Abuse Reporting Metrics:")
 	log.Printf("   Total Reports: %d", rm.totalReports)
 	log.Printf("   Successful: %d (%.2f%%)", rm.successReports, successRate)
 	log.Printf("   Failed: %d (%.2f%%)", rm.failedReports, failureRate)
 	log.Printf("   Active Reporters: %d", len(rm.reporters))
-	
+
 	for _, reporter := range rm.reporters {
 		status := "enabled"
 		if !reporter.IsEnabled() {
