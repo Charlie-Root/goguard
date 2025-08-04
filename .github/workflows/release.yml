@@ -74,19 +74,28 @@ jobs:
         # Verify binary
         ./$BINARY_NAME -version || echo "Version check failed (expected for cross-compilation)"
         
-        # Create archive with all necessary files
+        # Prepare files for archive
+        FILES_TO_INCLUDE="$BINARY_NAME README.md"
+        
+        # Add config file if it exists
+        if [ -f "config.yaml" ]; then
+          FILES_TO_INCLUDE="$FILES_TO_INCLUDE config.yaml"
+        elif [ -f "config.example.yaml" ]; then
+          FILES_TO_INCLUDE="$FILES_TO_INCLUDE config.example.yaml"
+        fi
+        
+        # Add LICENSE if it exists
+        if [ -f "LICENSE" ]; then
+          FILES_TO_INCLUDE="$FILES_TO_INCLUDE LICENSE"
+        elif [ -f "LICENSE.md" ]; then
+          FILES_TO_INCLUDE="$FILES_TO_INCLUDE LICENSE.md"
+        fi
+        
+        # Create archive with available files
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          zip "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.zip" \
-            $BINARY_NAME \
-            README.md \
-            config.yaml \
-            LICENSE
+          zip "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.zip" $FILES_TO_INCLUDE
         else
-          tar -czf "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
-            $BINARY_NAME \
-            README.md \
-            config.yaml \
-            LICENSE
+          tar -czf "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" $FILES_TO_INCLUDE
         fi
     
     - name: Upload artifacts
