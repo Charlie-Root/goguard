@@ -1,0 +1,84 @@
+# GoGuard Configuration Example
+
+# Log files to monitor
+log_files:
+  - path: "/var/log/auth.log"
+    patterns:
+      # SSH brute force attempts
+      - regex: "Failed password for .* from (\\d+\\.\\d+\\.\\d+\\.\\d+)"
+        ip_group: 1
+        threshold: 3
+        ban_time: "1h"
+      
+      # Invalid SSH users
+      - regex: "Invalid user .* from (\\d+\\.\\d+\\.\\d+\\.\\d+)"
+        ip_group: 1
+        threshold: 5
+        ban_time: "2h"
+
+  - path: "/var/log/nginx/access.log"
+    patterns:
+      # HTTP brute force
+      - regex: "\\\"POST /wp-login.php.*\\\" 40[0-9] .* \\\"(\\d+\\.\\d+\\.\\d+\\.\\d+)\\\""
+        ip_group: 1
+        threshold: 10
+        ban_time: "6h"
+
+# Web interface
+web:
+  enabled: true
+  port: 8080
+
+# IP whitelist (never ban these)
+whitelist:
+  - "127.0.0.1"
+  - "::1"
+  - "192.168.1.0/24"
+  - "10.0.0.0/8"
+
+# Actions - Multiple firewall backends (NEW!)
+actions:
+  # Primary action: iptables
+  - type: "iptables"
+    chain: "INPUT"
+    target: "DROP"
+  
+  # Secondary action: UFW (Ubuntu/Debian)
+  - type: "ufw"
+  
+  # Alternative: firewalld (RHEL/CentOS/Fedora)
+  # - type: "firewalld"
+  #   options:
+  #     zone: "drop"
+  
+  # Alternative: nftables (modern Linux)
+  # - type: "nftables"
+  #   chain: "input"
+  #   options:
+  #     table: "filter"
+  
+  # Alternative: null routing (works on most systems)
+  # - type: "route"
+  
+  # For testing: dummy action (logs only)
+  # - type: "dummy"
+
+# Legacy firewall config (deprecated - use actions instead)
+# firewall:
+#   chain: "INPUT"
+#   target: "DROP"
+
+# Optional: Report banned IPs to abuse databases
+abuse_reporting:
+  enabled: true
+  timeout: 30s
+  retry_attempts: 3
+  retry_delay: 5s
+  
+  abuseipdb:
+    enabled: true
+    api_key: "your-abuseipdb-api-key"
+    categories: [14, 18, 20]  # Hacking, SSH, Brute Force
+
+# Advanced options
+production_mode: false

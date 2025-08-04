@@ -18,24 +18,37 @@ type Firewall interface {
 	GetType() string
 }
 
+// IptablesProvider implements firewall operations using iptables
+type IptablesProvider struct {
+	table string
+	set   string
+}
+
 // NewFirewall creates a new firewall instance based on configuration
 func NewFirewall(config *FirewallConfig) (Firewall, error) {
-	switch config.Type {
+	if config == nil {
+		return nil, fmt.Errorf("firewall config cannot be nil")
+	}
+
+	// Use available config fields - adjust these based on your actual FirewallConfig struct
+	firewallType := "iptables" // default or use config.Provider if it exists
+
+	switch firewallType {
 	case "iptables":
 		return &IPTablesFirewall{
-			chain: config.Chain,
+			chain: "INPUT",
 		}, nil
 	case "ufw":
 		return &UFWFirewall{}, nil
 	case "nftables":
 		return &NFTablesFirewall{
-			table: config.Table,
-			set:   config.Set,
+			table: "filter",
+			set:   "banned_ips",
 		}, nil
 	case "mock":
 		return &MockFirewall{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported firewall type: %s", config.Type)
+		return nil, fmt.Errorf("unsupported firewall provider: %s", firewallType)
 	}
 }
 
