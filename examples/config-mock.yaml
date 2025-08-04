@@ -1,0 +1,37 @@
+# Mock Firewall Configuration Example
+# This configuration uses mock firewall for testing and development
+
+log_files:
+- path: ./test/logs/test_auth.log
+  patterns:
+  - ban_time: 5m
+    ip_group: 1
+    regex: Failed password for .* from (\d+\.\d+\.\d+\.\d+)
+    threshold: 2
+  - ban_time: 10m
+    ip_group: 1
+    regex: Invalid user .* from (\d+\.\d+\.\d+\.\d+)
+    threshold: 3
+
+- path: ./test/logs/test_nginx_access.log
+  patterns:
+  - ban_time: 15m
+    ip_group: 1
+    regex: (\d+\.\d+\.\d+\.\d+) .* "[^"]*" 404
+    threshold: 5
+
+production_mode: false
+web:
+  enabled: true
+  port: 8080
+
+# Mock Firewall Configuration (for testing/development)
+firewall:
+  type: mock
+  whitelist: []             # Additional firewall-specific whitelist
+
+# Global whitelist (applies to all firewall types)
+whitelist:
+- 127.0.0.1
+- ::1
+- 192.168.1.0/24

@@ -1,0 +1,41 @@
+# Auto-Detection Firewall Configuration Example
+# This configuration automatically detects and uses the best available firewall
+
+log_files:
+- path: /var/log/auth.log
+  patterns:
+  - ban_time: 1h
+    ip_group: 1
+    regex: Failed password for .* from (\d+\.\d+\.\d+\.\d+)
+    threshold: 3
+  - ban_time: 2h
+    ip_group: 1
+    regex: Invalid user .* from (\d+\.\d+\.\d+\.\d+)
+    threshold: 5
+
+- path: /var/log/nginx/access.log
+  patterns:
+  - ban_time: 2h
+    ip_group: 1
+    regex: (\d+\.\d+\.\d+\.\d+) .* "[^"]*" 404
+    threshold: 10
+
+production_mode: true
+web:
+  enabled: true
+  port: 8080
+
+# Auto-Detection Firewall Configuration
+# GoGuard will automatically detect and use the best available firewall:
+# Priority: nftables > iptables > ufw > mock
+firewall:
+  type: auto
+  whitelist: []             # Additional firewall-specific whitelist
+
+# Global whitelist (applies to all firewall types)
+whitelist:
+- 127.0.0.1
+- ::1
+- 192.168.0.0/16
+- 10.0.0.0/8
+- 172.16.0.0/12
