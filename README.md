@@ -1,6 +1,6 @@
-# GoGuard Simple - Fail2Ban Implementation
+# GoGuard
 
-A dramatically simplified fail2ban implementation in Go that focuses on core security requirements without unnecessary complexity.
+A dramatically simplified fail2ban-like implementation in Go that focuses on core security requirements without unnecessary complexity.
 
 ## Overview
 
