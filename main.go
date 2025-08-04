@@ -15,9 +15,9 @@ const (
 
 func main() {
 	var (
-		configFile = flag.String("config", "config.yaml", "Path to configuration file")
+		configFile  = flag.String("config", "config.yaml", "Path to configuration file")
 		showVersion = flag.Bool("version", false, "Show version information")
-		debug      = flag.Bool("debug", false, "Enable debug logging")
+		debug       = flag.Bool("debug", false, "Enable debug logging")
 	)
 	flag.Parse()
 
@@ -55,23 +55,21 @@ func main() {
 	}
 	log.Println("Monitor created successfully")
 
-	// Start monitoring
+	// Create web server
+	webServer := NewWebServer(monitor, config)
+	go func() {
+		if err := webServer.Start(); err != nil {
+			log.Printf("Web server error: %v", err)
+		}
+	}()
+	log.Printf("Web interface available at http://localhost:%d", config.Web.Port)
+
+	// Start monitor
 	log.Println("Starting monitoring...")
-	if err := Start(monitor); err != nil {
+	if err := monitor.Start(); err != nil {
 		log.Fatalf("Failed to start monitor: %v", err)
 	}
 	log.Println("Monitoring started successfully")
-
-	// Start web server if enabled
-	if config.Web.Enabled {
-		webServer := NewWebServer(monitor, config)
-		go func() {
-			if err := webServer.Start(); err != nil {
-				log.Fatalf("Failed to start web server: %v", err)
-			}
-		}()
-		log.Printf("Web interface available at http://localhost:%d", config.Web.Port)
-	}
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -82,6 +80,11 @@ func main() {
 	// Wait for signal
 	sig := <-sigChan
 	log.Printf("Received signal %v, shutting down...", sig)
+
+	log.Println("Shutting down...")
+
+	// Stop monitor
+	monitor.Stop()
 
 	// Cleanup (remove iptables rules)
 	log.Println("Cleaning up iptables rules...")

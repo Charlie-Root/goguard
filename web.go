@@ -594,22 +594,12 @@ func (w *WebServer) handleUnban(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove from bans and iptables
+	// Remove from bans using action manager
 	w.monitor.mu.Lock()
 	defer w.monitor.mu.Unlock()
 
 	if _, exists := w.monitor.state.Bans[req.IP]; !exists {
-		json.NewEncoder(rw).Encode(map[string]interface{}{
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(rw, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Remove from bans and iptables
-	w.monitor.mu.Lock()
-	defer w.monitor.mu.Unlock()
-
-	if _, exists := w.monitor.state.Bans[req.IP]; !exists {
+		rw.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(rw).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "IP not found in ban list",
@@ -617,13 +607,20 @@ func (w *WebServer) handleUnban(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove from firewall
-	if err := w.monitor.firewall.UnblockIP(req.IP); err != nil {
-		log.Printf("Failed to unblock IP %s with %s: %v", req.IP, w.monitor.firewall.GetType(), err)
+	// Remove from firewall using action manager
+	if err := w.monitor.actionManager.Unban(req.IP); err != nil {
+		log.Printf("Failed to unban IP %s: %v", req.IP, err)
+		rw.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(rw).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to unban IP: %v", err),
+		})
+		return
 	}
 
 	// Remove from memory
 	delete(w.monitor.state.Bans, req.IP)
+	delete(w.monitor.state.FailureCounts, req.IP)
 	w.monitor.saveState()
 
 	log.Printf("Manually unbanned IP: %s", req.IP)
