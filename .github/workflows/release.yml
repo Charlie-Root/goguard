@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build and Release GoGuard
 
 on:
   push:
@@ -10,7 +10,27 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Get dependencies
+      run: go mod download
+    
+    - name: Run tests
+      run: go test -v ./...
+    
+    - name: Test build
+      run: go build -o goguard-test .
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -36,19 +56,37 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
       run: |
+        # Set version info
+        VERSION=${GITHUB_REF#refs/tags/}
+        COMMIT=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        
+        # Set binary name
         if [ "${{ matrix.goos }}" = "windows" ]; then
           BINARY_NAME="goguard-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
         else
           BINARY_NAME="goguard-${{ matrix.goos }}-${{ matrix.goarch }}"
         fi
         
-        go build -ldflags="-s -w" -o $BINARY_NAME .
+        # Build with version info
+        go build -ldflags="-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildTime=$BUILD_TIME" -o $BINARY_NAME .
         
-        # Create archive
+        # Verify binary
+        ./$BINARY_NAME -version || echo "Version check failed (expected for cross-compilation)"
+        
+        # Create archive with all necessary files
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          zip "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.zip" $BINARY_NAME README.md config.example.yaml
+          zip "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.zip" \
+            $BINARY_NAME \
+            README.md \
+            config.yaml \
+            LICENSE
         else
-          tar -czf "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" $BINARY_NAME README.md config.example.yaml
+          tar -czf "goguard-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
+            $BINARY_NAME \
+            README.md \
+            config.yaml \
+            LICENSE
         fi
     
     - name: Upload artifacts
@@ -68,7 +106,7 @@ jobs:
         fetch-depth: 0
     
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         path: ./artifacts
     
@@ -81,6 +119,8 @@ jobs:
     - name: Generate changelog
       id: changelog
       run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        
         if [ -f CHANGELOG.md ]; then
           echo "Using existing CHANGELOG.md"
           CHANGELOG=$(head -n 50 CHANGELOG.md)
@@ -94,39 +134,85 @@ jobs:
           fi
         fi
         
-        # Create release notes
+        # Create comprehensive release notes
         cat > release_notes.md << EOF
-        # GoGuard Release ${GITHUB_REF#refs/tags/}
+        # GoGuard ${VERSION} - Advanced Intrusion Detection & Response System
         
-        ## What's Changed
+        ## 🚀 Features
+        - **Real-time log monitoring** with flexible pattern matching
+        - **Multiple firewall backends** (iptables, ufw, nftables, mock)
+        - **Abuse reporting** to AbuseIPDB.com and AbuseDB.info
+        - **Web interface** with REST API at port 8080
+        - **Persistent state management** with automatic cleanup
+        - **Production-ready** with comprehensive logging
+        
+        ## 📋 What's Changed
         $CHANGELOG
         
-        ## Installation
+        ## 📦 Installation
         
-        Download the appropriate binary for your system:
-        - **Linux AMD64**: \`goguard-linux-amd64.tar.gz\`
-        - **Linux ARM64**: \`goguard-linux-arm64.tar.gz\`
-        - **macOS AMD64**: \`goguard-darwin-amd64.tar.gz\`
-        - **macOS ARM64**: \`goguard-darwin-arm64.tar.gz\`
-        - **Windows AMD64**: \`goguard-windows-amd64.zip\`
+        ### Quick Start
+        1. Download the appropriate binary for your system
+        2. Extract the archive: \`tar -xzf goguard-*.tar.gz\` (Linux/macOS) or extract zip (Windows)
+        3. Copy config: \`cp config.yaml my-config.yaml\`
+        4. Edit configuration for your environment
+        5. Run with root privileges: \`sudo ./goguard-* -config my-config.yaml\`
         
-        Extract the archive and run:
+        ### Available Downloads
+        - **Linux AMD64**: \`goguard-linux-amd64.tar.gz\` (recommended for most servers)
+        - **Linux ARM64**: \`goguard-linux-arm64.tar.gz\` (for ARM servers, Raspberry Pi)
+        - **macOS Intel**: \`goguard-darwin-amd64.tar.gz\`
+        - **macOS Apple Silicon**: \`goguard-darwin-arm64.tar.gz\`
+        - **Windows**: \`goguard-windows-amd64.zip\`
+        
+        ## ⚙️ Configuration
+        
+        The included \`config.yaml\` contains:
+        - Pre-configured patterns for 25+ services (Nginx, Apache, SSH, etc.)
+        - Firewall auto-detection (iptables/ufw/nftables)
+        - Abuse reporting setup (requires API keys)
+        - Web interface configuration
+        - Comprehensive whitelisting options
+        
+        ### Test Mode
         \`\`\`bash
-        # Linux/macOS
-        tar -xzf goguard-*.tar.gz
-        sudo ./goguard-* --config config.example.yaml
-        
-        # Windows
-        # Extract the zip file and run goguard.exe
+        # Run with mock firewall for testing (no root required)
+        ./goguard-* -config config.yaml
         \`\`\`
         
-        ## Configuration
+        ### Production Mode
+        \`\`\`bash
+        # Run with real firewall (requires root)
+        sudo ./goguard-* -config config.yaml
+        \`\`\`
         
-        Copy \`config.example.yaml\` to \`config.yaml\` and customize for your needs.
+        ## 🌐 Web Interface
         
-        ## Documentation
+        Access the dashboard at: \`http://localhost:8080\`
+        - View active bans and statistics
+        - Monitor real-time activity
+        - REST API for integrations
         
-        See the [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
+        ## 📚 Documentation
+        
+        - **Full documentation**: [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+        - **Configuration guide**: See included \`config.yaml\` with detailed comments
+        - **API reference**: Built-in at \`/api/stats\` and \`/health\` endpoints
+        
+        ## 🔧 System Requirements
+        
+        - Linux, macOS, or Windows
+        - One of: iptables, ufw, or nftables (for production use)
+        - Root/Administrator privileges (for firewall management)
+        - Go 1.19+ (if building from source)
+        
+        ## 🆘 Support
+        
+        - **Issues**: Report bugs on GitHub Issues
+        - **Discussions**: Use GitHub Discussions for questions
+        - **Security**: Report security issues privately
+        
+        **Note**: This release includes comprehensive log patterns for immediate protection against common attacks. Review and customize the configuration before production deployment.
         EOF
     
     - name: Create Release
@@ -168,6 +254,11 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+        labels: |
+          org.opencontainers.image.title=GoGuard
+          org.opencontainers.image.description=Advanced Intrusion Detection & Response System
+          org.opencontainers.image.vendor=GoGuard Project
     
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -179,3 +270,7 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          COMMIT=${{ github.sha }}
+          BUILD_TIME=${{ github.run_started_at }}
