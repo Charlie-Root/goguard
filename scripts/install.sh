@@ -180,24 +180,32 @@ install_binary() {
     log_success "Binary installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
-download_config() {
-    log_info "Downloading default configuration..."
+create_directories() {
+    log_info "Creating directories..."
     
-    local config_url="https://raw.githubusercontent.com/${GITHUB_REPO}/${VERSION}/config.yaml"
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$STATE_DIR"
+    mkdir -p "$LOG_DIR"
+    
+    # Set ownership and permissions
+    chown root:root "$CONFIG_DIR"
+    chown root:root "$STATE_DIR"
+    chown root:root "$LOG_DIR"
+    
+    chmod 755 "$CONFIG_DIR"
+    chmod 755 "$STATE_DIR"
+    chmod 755 "$LOG_DIR"
+    
+    log_success "Directories created"
+}
+
+download_config() {
+    log_info "Creating default configuration..."
+    
     local temp_config="/tmp/goguard-config.yaml"
     
-    if command -v wget &> /dev/null; then
-        wget -q "$config_url" -O "$temp_config"
-    elif command -v curl &> /dev/null; then
-        curl -sL "$config_url" -o "$temp_config"
-    else
-        log_error "Neither wget nor curl found for downloading config"
-        exit 1
-    fi
-    
-    if [[ -f "$temp_config" ]]; then
-        # Simplify config for production
-        cat > "$temp_config" << 'EOF'
+    # Create a basic production config instead of downloading
+    cat > "$temp_config" << 'EOF'
 log_files:
 - path: /var/log/nginx/access.log
   patterns:
@@ -235,19 +243,19 @@ whitelist:
 - 10.0.0.0/8
 - 172.16.0.0/12
 EOF
-        CONFIG_SOURCE="$temp_config"
-        log_success "Default configuration prepared"
-    else
-        log_error "Failed to prepare configuration"
-        exit 1
-    fi
+    CONFIG_SOURCE="$temp_config"
+    log_success "Default configuration created"
 }
 
 install_config() {
     log_info "Installing configuration..."
     
-    # Check for local config first
-    if [[ -f "config.yaml" ]]; then
+    # Check for local config first - look in current directory where script is run from
+    local current_dir=$(pwd)
+    if [[ -f "${current_dir}/config.yaml" ]]; then
+        CONFIG_SOURCE="${current_dir}/config.yaml"
+        log_info "Using local configuration file: ${current_dir}/config.yaml"
+    elif [[ -f "config.yaml" ]]; then
         CONFIG_SOURCE="config.yaml"
         log_info "Using local configuration file"
     else

@@ -106,8 +106,169 @@ jobs:
           goguard-${{ matrix.goos }}-${{ matrix.goarch }}*
         retention-days: 1
 
+  build-deb:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Get dependencies
+      run: go mod download
+    
+    - name: Build binary for Debian
+      env:
+        GOOS: linux
+        GOARCH: ${{ matrix.arch }}
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        COMMIT=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        
+        go build -ldflags="-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildTime=$BUILD_TIME" -o goguard .
+    
+    - name: Create Debian package
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        ARCH=${{ matrix.arch }}
+        
+        # Create package directory structure
+        PKG_DIR="goguard_${VERSION}_${ARCH}"
+        mkdir -p ${PKG_DIR}/DEBIAN
+        mkdir -p ${PKG_DIR}/usr/bin
+        mkdir -p ${PKG_DIR}/etc/goguard
+        mkdir -p ${PKG_DIR}/usr/share/doc/goguard
+        mkdir -p ${PKG_DIR}/lib/systemd/system
+        
+        # Copy binary
+        cp goguard ${PKG_DIR}/usr/bin/
+        chmod 755 ${PKG_DIR}/usr/bin/goguard
+        
+        # Copy config file
+        if [ -f "config.yaml" ]; then
+          cp config.yaml ${PKG_DIR}/etc/goguard/config.yaml
+        elif [ -f "config.example.yaml" ]; then
+          cp config.example.yaml ${PKG_DIR}/etc/goguard/config.yaml
+        fi
+        
+        # Copy documentation
+        cp README.md ${PKG_DIR}/usr/share/doc/goguard/
+        if [ -f "LICENSE" ]; then
+          cp LICENSE ${PKG_DIR}/usr/share/doc/goguard/
+        elif [ -f "LICENSE.md" ]; then
+          cp LICENSE.md ${PKG_DIR}/usr/share/doc/goguard/
+        fi
+        
+        # Create systemd service file
+        cat > ${PKG_DIR}/lib/systemd/system/goguard.service << 'EOF'
+        [Unit]
+        Description=GoGuard Intrusion Detection & Response System
+        After=network.target
+        Wants=network.target
+        
+        [Service]
+        Type=simple
+        User=root
+        ExecStart=/usr/bin/goguard -config /etc/goguard/config.yaml
+        Restart=always
+        RestartSec=5
+        StandardOutput=journal
+        StandardError=journal
+        SyslogIdentifier=goguard
+        
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        
+        # Create control file
+        cat > ${PKG_DIR}/DEBIAN/control << EOF
+        Package: goguard
+        Version: ${VERSION}
+        Section: admin
+        Priority: optional
+        Architecture: ${ARCH}
+        Maintainer: GoGuard Team <noreply@github.com>
+        Description: Advanced Intrusion Detection & Response System
+         GoGuard is a real-time log monitoring and intrusion detection system
+         that automatically bans malicious IPs using iptables/ufw/nftables.
+         .
+         Features:
+          - Real-time log monitoring with flexible pattern matching
+          - Multiple firewall backends (iptables, ufw, nftables)
+          - Abuse reporting to AbuseIPDB.com and AbuseDB.info
+          - Web interface with REST API
+          - Persistent state management
+        Homepage: https://github.com/${{ github.repository }}
+        Depends: iptables | ufw | nftables
+        Recommends: systemd
+        EOF
+        
+        # Create postinst script for systemd integration
+        cat > ${PKG_DIR}/DEBIAN/postinst << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        if [ "$1" = "configure" ]; then
+            # Reload systemd daemon
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl daemon-reload
+                echo "GoGuard service installed. To start:"
+                echo "  sudo systemctl enable goguard"
+                echo "  sudo systemctl start goguard"
+            fi
+            
+            # Set proper permissions
+            chmod 755 /usr/bin/goguard
+            chmod 644 /etc/goguard/config.yaml
+            
+            echo ""
+            echo "GoGuard has been installed successfully!"
+            echo "Configuration file: /etc/goguard/config.yaml"
+            echo "Edit the configuration file before starting the service."
+        fi
+        EOF
+        
+        # Create prerm script for service cleanup
+        cat > ${PKG_DIR}/DEBIAN/prerm << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        if [ "$1" = "remove" ]; then
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl stop goguard >/dev/null 2>&1 || true
+                systemctl disable goguard >/dev/null 2>&1 || true
+            fi
+        fi
+        EOF
+        
+        # Make scripts executable
+        chmod 755 ${PKG_DIR}/DEBIAN/postinst
+        chmod 755 ${PKG_DIR}/DEBIAN/prerm
+        
+        # Build the package
+        dpkg-deb --build ${PKG_DIR}
+        
+        # Verify package
+        dpkg-deb --info ${PKG_DIR}.deb
+        ls -la ${PKG_DIR}.deb
+    
+    - name: Upload Debian package
+      uses: actions/upload-artifact@v4
+      with:
+        name: goguard-deb-${{ matrix.arch }}
+        path: "*.deb"
+        retention-days: 1
+
   release:
-    needs: build
+    needs: [build, build-deb]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -122,7 +283,7 @@ jobs:
     - name: Move artifacts to release directory
       run: |
         mkdir -p release
-        find ./artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec mv {} ./release/ \;
+        find ./artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" \) -exec mv {} ./release/ \;
         ls -la ./release/
     
     - name: Generate changelog
@@ -160,7 +321,21 @@ jobs:
         
         ## 📦 Installation
         
-        ### Quick Start
+        ### Debian/Ubuntu (Recommended - Easy Install!)
+        \`\`\`bash
+        # Download and install .deb package
+        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/goguard_${VERSION#v}_amd64.deb
+        sudo dpkg -i goguard_${VERSION#v}_amd64.deb
+        
+        # Edit configuration
+        sudo nano /etc/goguard/config.yaml
+        
+        # Start service
+        sudo systemctl enable goguard
+        sudo systemctl start goguard
+        \`\`\`
+        
+        ### Manual Installation
         1. Download the appropriate binary for your system
         2. Extract the archive: \`tar -xzf goguard-*.tar.gz\` (Linux/macOS) or extract zip (Windows)
         3. Copy config: \`cp config.yaml my-config.yaml\`
@@ -168,20 +343,37 @@ jobs:
         5. Run with root privileges: \`sudo ./goguard-* -config my-config.yaml\`
         
         ### Available Downloads
-        - **Linux AMD64**: \`goguard-linux-amd64.tar.gz\` (recommended for most servers)
-        - **Linux ARM64**: \`goguard-linux-arm64.tar.gz\` (for ARM servers, Raspberry Pi)
+        - **Debian AMD64**: \`goguard_${VERSION#v}_amd64.deb\` (🌟 **NEW!** One-click install)
+        - **Debian ARM64**: \`goguard_${VERSION#v}_arm64.deb\` (🌟 **NEW!** For ARM servers)
+        - **Linux AMD64**: \`goguard-linux-amd64.tar.gz\` (manual install)
+        - **Linux ARM64**: \`goguard-linux-arm64.tar.gz\` (manual install)
         - **macOS Intel**: \`goguard-darwin-amd64.tar.gz\`
         - **macOS Apple Silicon**: \`goguard-darwin-arm64.tar.gz\`
         - **Windows**: \`goguard-windows-amd64.zip\`
         
         ## ⚙️ Configuration
         
-        The included \`config.yaml\` contains:
+        **Debian Package**: Configuration is at \`/etc/goguard/config.yaml\`
+        **Manual Install**: Use the included \`config.yaml\`
+        
+        The configuration includes:
         - Pre-configured patterns for 25+ services (Nginx, Apache, SSH, etc.)
         - Firewall auto-detection (iptables/ufw/nftables)
         - Abuse reporting setup (requires API keys)
         - Web interface configuration
         - Comprehensive whitelisting options
+        
+        ### Debian Service Management
+        \`\`\`bash
+        # Check status
+        sudo systemctl status goguard
+        
+        # View logs
+        sudo journalctl -u goguard -f
+        
+        # Restart service
+        sudo systemctl restart goguard
+        \`\`\`
         
         ### Test Mode
         \`\`\`bash
@@ -205,7 +397,7 @@ jobs:
         ## 📚 Documentation
         
         - **Full documentation**: [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
-        - **Configuration guide**: See included \`config.yaml\` with detailed comments
+        - **Configuration guide**: See configuration file with detailed comments
         - **API reference**: Built-in at \`/api/stats\` and \`/health\` endpoints
         
         ## 🔧 System Requirements
